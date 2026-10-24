@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Chat</title>
+<style>
+*{box-sizing:border-box;margin:0;font-family:system-ui,sans-serif}
+body{background:#f4f4f2;height:100vh;display:flex;justify-content:center}
+.screen{width:100%;max-width:480px;height:100%;background:#fff;display:flex;flex-direction:column}
+[hidden]{display:none!important}
+header{background:#1f6feb;color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px;font-size:18px}
+header button{background:none;border:0;color:#fff;font-size:20px}
+header span{flex:1}
+.pad{padding:24px;display:flex;flex-direction:column;gap:12px;margin:auto 0}
+input{padding:12px;border:1px solid #ccc;border-radius:10px;font-size:16px}
+.btn{padding:12px;border:0;border-radius:10px;background:#1f6feb;color:#fff;font-size:16px}
+.btn.alt{background:#eee;color:#222}
+#err{color:#c00;font-size:14px}
+#users{flex:1;overflow:auto}
+.u{padding:14px 16px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:center}
+.av{width:42px;height:42px;border-radius:50%;background:#dbe8ff;color:#1f4fa8;display:flex;align-items:center;justify-content:center;font-weight:500}
+#msgs{flex:1;overflow:auto;background:#f4f4f2;padding:12px;display:flex;flex-direction:column;gap:6px}
+.m{max-width:75%;padding:8px 12px;border-radius:12px;background:#fff;align-self:flex-start;word-break:break-word}
+.m.me{background:#dbe8ff;align-self:flex-end}
+.bar{display:flex;gap:8px;padding:10px;border-top:1px solid #eee}
+.bar input{flex:1;border-radius:20px}
+.bar button{width:44px;border:0;border-radius:50%;background:#1f6feb;color:#fff;font-size:18px}
+</style></head><body>
+
+<!--
+SETUP (3 min):
+1. console.firebase.google.com > Create project > Add Web app > copy the config below.
+2. Build > Authentication > Sign-in method > enable Email/Password.
+3. Build > Firestore Database > Create (production mode) > Rules, paste:
+rules_version='2'; service cloud.firestore { match /databases/{d}/documents {
+ match /users/{u} { allow read: if request.auth!=null; allow write: if request.auth.uid==u; }
+ match /chats/{c}/messages/{m} { allow read, write: if request.auth!=null && request.auth.uid in c.split('_'); }
+}}
+-->
+
+<div class="screen" id="auth">
+  <header>Chat</header>
+  <div class="pad">
+    <input id="name" placeholder="Smiya (ghir f tsjil)">
+    <input id="email" type="email" placeholder="name@email.com">
+    <input id="pass" type="password" placeholder="Mot de passe (6+)">
+    <div id="err">Kan7mel...</div>
+    <button class="btn" id="login">Dkhol</button>
+    <button class="btn alt" id="signup">Tsjil jdid</button>
+  </div>
+</div>
+
+<div class="screen" id="list" hidden>
+  <header><span>Conversations</span><button id="out" aria-label="Khrouj">&#x23FB;</button></header>
+  <div id="users"></div>
+</div>
+
+<div class="screen" id="chat" hidden>
+  <header><button id="back" aria-label="Rje3">&larr;</button><span id="who"></span></header>
+  <div id="msgs"></div>
+  <div class="bar"><input id="txt" placeholder="Kteb message"><button id="send" aria-label="Sifet">&#10148;</button></div>
+</div>
+
+<script>
+function showErr(m){var e=document.getElementById("err");if(e)e.textContent="Erreur: "+m}
+window.addEventListener("error",function(e){showErr(e.message||("ma t7mlch: "+(e.target&&e.target.src)))},true);
+window.addEventListener("unhandledrejection",function(e){showErr(e.reason&&(e.reason.code||e.reason.message)||e.reason)});
+</script>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,createUserWithEmailAndPassword,signInWithEmailAndPassword,onAuthStateChanged,signOut,updateProfile} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,collection,doc,setDoc,addDoc,onSnapshot,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "PASTE_HERE",
+  authDomain: "PASTE_HERE",
+  projectId: "PASTE_HERE",
+  appId: "PASTE_HERE"
+};
+const app = initializeApp(firebaseConfig), auth = getAuth(app), db = getFirestore(app);
+const $ = id => document.getElementById(id);
+const show = id => ["auth","list","chat"].forEach(s => $(s).hidden = s !== id);
+let me = null, unsubMsgs = null, peer = null;
+
+const fail = e => $("err").textContent = e.code ? e.code.replace("auth/","").replace(/-/g," ") : e.message;
+
+$("signup").onclick = async () => {
+  try {
+    const name = $("name").value.trim() || $("email").value.split("@")[0];
+    const c = await createUserWithEmailAndPassword(auth, $("email").value, $("pass").value);
+    await updateProfile(c.user, {displayName: name});
+    await setDoc(doc(db, "users", c.user.uid), {name, email: c.user.email});
+  } catch (e) { fail(e); }
+};
+$("login").onclick = () => signInWithEmailAndPassword(auth, $("email").value, $("pass").value).catch(fail);
+$("out").onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, u => {
+  me = u;
+  if (!u) return show("auth");
+  show("list");
+  onSnapshot(collection(db, "users"), snap => {
+    $("users").innerHTML = "";
+    snap.forEach(d => {
+      if (d.id === me.uid) return;
+      const x = d.data(), row = document.createElement("div");
+      row.className = "u";
+      row.innerHTML = '<div class="av"></div><div></div>';
+      row.children[0].textContent = (x.name || "?").slice(0,2).toUpperCase();
+      row.children[1].textContent = x.name;
+      row.onclick = () => openChat(d.id, x.name);
+      $("users").appendChild(row);
+    });
+    if (!$("users").children.length) $("users").innerHTML = '<p style="padding:24px;color:#666">Ma kayn 7ta wa7d akhor. Sawb compte tani (b email akhor) bach tjareb.</p>';
+  }, e => { $("users").innerHTML = '<p style="padding:24px;color:#c00"></p>'; $("users").firstChild.textContent = "Erreur: " + e.code; });
+});
+
+function openChat(uid, name) {
+  peer = uid;
+  $("who").textContent = name;
+  show("chat");
+  const id = [me.uid, uid].sort().join("_");
+  if (unsubMsgs) unsubMsgs();
+  unsubMsgs = onSnapshot(query(collection(db, "chats", id, "messages"), orderBy("t")), snap => {
+    $("msgs").innerHTML = "";
+    snap.forEach(d => {
+      const m = d.data(), b = document.createElement("div");
+      b.className = "m" + (m.from === me.uid ? " me" : "");
+      b.textContent = m.text;
+      $("msgs").appendChild(b);
+    });
+    $("msgs").scrollTop = 1e9;
+  });
+}
+
+async function send() {
+  const text = $("txt").value.trim();
+  if (!text) return;
+  $("txt").value = "";
+  const id = [me.uid, peer].sort().join("_");
+  await addDoc(collection(db, "chats", id, "messages"), {from: me.uid, text, t: serverTimestamp()});
+}
+$("send").onclick = send;
+$("txt").onkeydown = e => { if (e.key === "Enter") send(); };
+$("back").onclick = () => { if (unsubMsgs) unsubMsgs(); show("list"); };
+$("err").textContent = "";
+</script>
+</body></html>
