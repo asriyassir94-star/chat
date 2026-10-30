@@ -13,135 +13,141 @@ header span{flex:1}
 .pad{padding:24px;display:flex;flex-direction:column;gap:12px;margin:auto 0}
 input{padding:12px;border:1px solid #ccc;border-radius:10px;font-size:16px}
 .btn{padding:12px;border:0;border-radius:10px;background:#1f6feb;color:#fff;font-size:16px}
-.btn.alt{background:#eee;color:#222}
-#err{color:#c00;font-size:14px}
+.me-box{padding:12px 16px;background:#eef4ff;font-size:14px}
+.me-box b{font-size:18px;letter-spacing:1px}
+.add{display:flex;gap:8px;padding:10px 16px}
+.add input{flex:1}
 #users{flex:1;overflow:auto}
 .u{padding:14px 16px;border-bottom:1px solid #eee;display:flex;gap:12px;align-items:center}
 .av{width:42px;height:42px;border-radius:50%;background:#dbe8ff;color:#1f4fa8;display:flex;align-items:center;justify-content:center;font-weight:500}
+.sub{font-size:13px;color:#666}
 #msgs{flex:1;overflow:auto;background:#f4f4f2;padding:12px;display:flex;flex-direction:column;gap:6px}
 .m{max-width:75%;padding:8px 12px;border-radius:12px;background:#fff;align-self:flex-start;word-break:break-word}
 .m.me{background:#dbe8ff;align-self:flex-end}
+#hint{font-size:12px;color:#c60;padding:0 12px}
 .bar{display:flex;gap:8px;padding:10px;border-top:1px solid #eee}
 .bar input{flex:1;border-radius:20px}
 .bar button{width:44px;border:0;border-radius:50%;background:#1f6feb;color:#fff;font-size:18px}
+#err{color:#c00;font-size:13px;padding:0 16px}
 </style></head><body>
 
-<!--
-SETUP (3 min):
-1. console.firebase.google.com > Create project > Add Web app > copy the config below.
-2. Build > Authentication > Sign-in method > enable Email/Password.
-3. Build > Firestore Database > Create (production mode) > Rules, paste:
-rules_version='2'; service cloud.firestore { match /databases/{d}/documents {
- match /users/{u} { allow read: if request.auth!=null; allow write: if request.auth.uid==u; }
- match /chats/{c}/messages/{m} { allow read, write: if request.auth!=null && request.auth.uid in c.split('_'); }
-}}
--->
-
-<div class="screen" id="auth">
+<div class="screen" id="login">
   <header>Chat</header>
   <div class="pad">
-    <input id="name" placeholder="Smiya (ghir f tsjil)">
-    <input id="email" type="email" placeholder="name@email.com">
-    <input id="pass" type="password" placeholder="Mot de passe (6+)">
-    <div id="err">Kan7mel...</div>
-    <button class="btn" id="login">Dkhol</button>
-    <button class="btn alt" id="signup">Tsjil jdid</button>
+    <input id="name" placeholder="Smiytek">
+    <button class="btn" id="go">Dkhol</button>
+    <div id="err"></div>
   </div>
 </div>
 
 <div class="screen" id="list" hidden>
-  <header><span>Conversations</span><button id="out" aria-label="Khrouj">&#x23FB;</button></header>
+  <header><span>Conversations</span><small id="st">...</small></header>
+  <div class="me-box">Code dyalek: <b id="code"></b><br>3tih l sa7bek bach yzidek.</div>
+  <div class="add"><input id="fid" placeholder="Code dyal sa7bek"><button class="btn" id="add">Zid</button></div>
   <div id="users"></div>
 </div>
 
 <div class="screen" id="chat" hidden>
   <header><button id="back" aria-label="Rje3">&larr;</button><span id="who"></span></header>
   <div id="msgs"></div>
+  <div id="hint"></div>
   <div class="bar"><input id="txt" placeholder="Kteb message"><button id="send" aria-label="Sifet">&#10148;</button></div>
 </div>
 
 <script>
 function showErr(m){var e=document.getElementById("err");if(e)e.textContent="Erreur: "+m}
-window.addEventListener("error",function(e){showErr(e.message||("ma t7mlch: "+(e.target&&e.target.src)))},true);
-window.addEventListener("unhandledrejection",function(e){showErr(e.reason&&(e.reason.code||e.reason.message)||e.reason)});
+window.addEventListener("error",function(e){showErr(e.message||"ma t7mlch")},true);
 </script>
-<script type="module">
-import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {getAuth,createUserWithEmailAndPassword,signInWithEmailAndPassword,onAuthStateChanged,signOut,updateProfile} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,collection,doc,setDoc,addDoc,onSnapshot,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "PASTE_HERE",
-  authDomain: "PASTE_HERE",
-  projectId: "PASTE_HERE",
-  appId: "PASTE_HERE"
-};
-const app = initializeApp(firebaseConfig), auth = getAuth(app), db = getFirestore(app);
+<script>
 const $ = id => document.getElementById(id);
-const show = id => ["auth","list","chat"].forEach(s => $(s).hidden = s !== id);
-let me = null, unsubMsgs = null, peer = null;
+const show = id => ["login","list","chat"].forEach(s => $(s).hidden = s !== id);
+const API = "https://ntfy.sh/";
+let S = JSON.parse(localStorage.getItem("chat") || "null"), cur = null, es;
+if (S && !S.seen) S.seen = [];
+const save = () => { S.seen = S.seen.slice(-500); localStorage.setItem("chat", JSON.stringify(S)); };
 
-const fail = e => $("err").textContent = e.code ? e.code.replace("auth/","").replace(/-/g," ") : e.message;
-
-$("signup").onclick = async () => {
-  try {
-    const name = $("name").value.trim() || $("email").value.split("@")[0];
-    const c = await createUserWithEmailAndPassword(auth, $("email").value, $("pass").value);
-    await updateProfile(c.user, {displayName: name});
-    await setDoc(doc(db, "users", c.user.uid), {name, email: c.user.email});
-  } catch (e) { fail(e); }
+$("go").onclick = () => {
+  const name = $("name").value.trim();
+  if (!name) return showErr("kteb smiytek");
+  const r = () => Math.random().toString(36).slice(2, 7);
+  S = {name, id: "ch" + r() + r(), friends: {}, seen: []};
+  save(); start();
 };
-$("login").onclick = () => signInWithEmailAndPassword(auth, $("email").value, $("pass").value).catch(fail);
-$("out").onclick = () => signOut(auth);
 
-onAuthStateChanged(auth, u => {
-  me = u;
-  if (!u) return show("auth");
+function start() {
   show("list");
-  onSnapshot(collection(db, "users"), snap => {
-    $("users").innerHTML = "";
-    snap.forEach(d => {
-      if (d.id === me.uid) return;
-      const x = d.data(), row = document.createElement("div");
-      row.className = "u";
-      row.innerHTML = '<div class="av"></div><div></div>';
-      row.children[0].textContent = (x.name || "?").slice(0,2).toUpperCase();
-      row.children[1].textContent = x.name;
-      row.onclick = () => openChat(d.id, x.name);
-      $("users").appendChild(row);
-    });
-    if (!$("users").children.length) $("users").innerHTML = '<p style="padding:24px;color:#666">Ma kayn 7ta wa7d akhor. Sawb compte tani (b email akhor) bach tjareb.</p>';
-  }, e => { $("users").innerHTML = '<p style="padding:24px;color:#c00"></p>'; $("users").firstChild.textContent = "Erreur: " + e.code; });
-});
+  $("code").textContent = S.id;
+  renderList(); listen();
+}
 
-function openChat(uid, name) {
-  peer = uid;
-  $("who").textContent = name;
-  show("chat");
-  const id = [me.uid, uid].sort().join("_");
-  if (unsubMsgs) unsubMsgs();
-  unsubMsgs = onSnapshot(query(collection(db, "chats", id, "messages"), orderBy("t")), snap => {
-    $("msgs").innerHTML = "";
-    snap.forEach(d => {
-      const m = d.data(), b = document.createElement("div");
-      b.className = "m" + (m.from === me.uid ? " me" : "");
-      b.textContent = m.text;
-      $("msgs").appendChild(b);
-    });
-    $("msgs").scrollTop = 1e9;
+function listen() {
+  if (es) es.close();
+  es = new EventSource(API + "cx-" + S.id + "/sse?since=all");
+  es.onopen = () => $("st").textContent = "en ligne";
+  es.onerror = () => $("st").textContent = "offline";
+  es.onmessage = ev => {
+    let e, d;
+    try { e = JSON.parse(ev.data); if (e.event !== "message") return; d = JSON.parse(e.message); } catch (x) { return; }
+    if (!d.id || S.seen.includes(d.id)) return;
+    S.seen.push(d.id);
+    const f = S.friends[d.from] || (S.friends[d.from] = {name: d.name, msgs: []});
+    f.name = d.name; f.msgs.push({me: 0, text: d.text});
+    save(); renderList();
+    if (cur === d.from) renderChat();
+  };
+}
+
+function renderList() {
+  $("users").innerHTML = "";
+  Object.keys(S.friends).forEach(id => {
+    const f = S.friends[id], row = document.createElement("div");
+    row.className = "u";
+    row.innerHTML = '<div class="av"></div><div><div class="n"></div><div class="sub"></div></div>';
+    row.querySelector(".av").textContent = f.name.slice(0, 2).toUpperCase();
+    row.querySelector(".n").textContent = f.name;
+    const last = f.msgs[f.msgs.length - 1];
+    row.querySelector(".sub").textContent = last ? last.text : "Bda l'hadra";
+    row.onclick = () => { cur = id; $("who").textContent = f.name; $("hint").textContent = ""; show("chat"); renderChat(); };
+    $("users").appendChild(row);
   });
 }
 
+function renderChat() {
+  $("msgs").innerHTML = "";
+  S.friends[cur].msgs.forEach(m => {
+    const b = document.createElement("div");
+    b.className = "m" + (m.me ? " me" : "");
+    b.textContent = m.text;
+    $("msgs").appendChild(b);
+  });
+  $("msgs").scrollTop = 1e9;
+}
+
+$("add").onclick = () => {
+  const id = $("fid").value.trim();
+  if (!id || id === S.id) return;
+  S.friends[id] = S.friends[id] || {name: id, msgs: []};
+  save(); renderList(); $("fid").value = "";
+};
+
 async function send() {
   const text = $("txt").value.trim();
-  if (!text) return;
+  if (!text || !cur) return;
+  const to = cur;
   $("txt").value = "";
-  const id = [me.uid, peer].sort().join("_");
-  await addDoc(collection(db, "chats", id, "messages"), {from: me.uid, text, t: serverTimestamp()});
+  const body = JSON.stringify({id: Math.random().toString(36).slice(2), from: S.id, name: S.name, text});
+  try {
+    const r = await fetch(API + "cx-" + to, {method: "POST", body});
+    if (!r.ok) throw new Error("http " + r.status);
+    S.friends[to].msgs.push({me: 1, text}); save();
+    $("hint").textContent = "";
+    if (cur === to) renderChat();
+  } catch (x) { $("hint").textContent = "Ma tsiftach: " + (x.message || x); }
 }
 $("send").onclick = send;
 $("txt").onkeydown = e => { if (e.key === "Enter") send(); };
-$("back").onclick = () => { if (unsubMsgs) unsubMsgs(); show("list"); };
-$("err").textContent = "";
+$("back").onclick = () => { cur = null; show("list"); renderList(); };
+
+if (S) start();
 </script>
 </body></html>
